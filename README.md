@@ -6,7 +6,7 @@ A PyTorch implementation of the paper "Attention Is All You Need". This reposito
 ```bash
 conda install -c pytorch torchtext pytorch
 ```
-- `pytorch==1.12` and `torchtext==0.13` works fine for me.
+- `pytorch==1.12` and `torchtext==0.13` work fine for me.
 
 ## Data Preparation
 The code uses a small subset (5k or 50k samples) of the `translation2019zh` English-Chinese translation dataset.  A very simple tokenizer is included for fast experimentation. Sample data is provided in the `dataset` folder.

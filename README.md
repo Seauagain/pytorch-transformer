@@ -2,11 +2,14 @@
 A PyTorch implementation of the paper "Attention Is All You Need". This repository contains a lightweight Transformer implementation in the `speedrun` directory, designed for minimal dependencies and easy execution.
 
 ## Requirements
-- Install `pytorch` and `torchtext` first.
+- One need install `pytorch` and `torchtext` first. 
+- `pytorch==1.12` and `torchtext==0.13` work fine for me.
+
+For instance, you can install the packages via `conda`.
 ```bash
 conda install -c pytorch torchtext pytorch
 ```
-- `pytorch==1.12` and `torchtext==0.13` work fine for me.
+
 
 ## Data Preparation
 The code uses a small subset (5k or 50k samples) of the `translation2019zh` English-Chinese translation dataset.  A very simple tokenizer is included for fast experimentation. Sample data is provided in the `dataset` folder.

@@ -14,6 +14,7 @@ from torch.utils.data import random_split
 ## torchtext==0.13 torch==1.12 works fine for me 
 
 def load_sentences_from_json(json_file):
+    """load English and Chinese sentence pairs from a json file."""
     english_sentences = []
     chinese_sentences = []
     with open(json_file, 'r', encoding='utf-8') as f:
@@ -74,7 +75,7 @@ def collate_fn(batch):
 
 
 
-data_json_path = "../dataset/translation2019zh_train5k.json"
+data_json_path = "../dataset/translation2019zh_train50k.json"
 # 加载原始的数据
 english_sentences, chinese_sentences = load_sentences_from_json(data_json_path)
 
@@ -104,7 +105,7 @@ src_vocab_size = len(en_vocab)
 trg_vocab_size = len(zh_vocab)
 src_pad_idx = en_vocab['<pad>']         # source padding token index
 trg_pad_idx = zh_vocab['<pad>']         # target padding token index
-trg_sos_idx = en_vocab['<bos>']         # target start token 
+trg_sos_idx = zh_vocab['<bos>']         # target start token 
 
 # 划分训练集和验证集
 train_size = int(0.9 * len(dataset))  

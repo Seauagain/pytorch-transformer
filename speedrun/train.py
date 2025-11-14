@@ -28,13 +28,9 @@ max_seq_length = 5000
 dropout = 0.1
 
 
-
-model = Transformer(
+model = Transformer(  
         en_vocab_size = src_vocab_size,    # source vocabulary size
         de_vocab_size = trg_vocab_size,   # target vocabulary size
-        src_pad_idx = src_pad_idx,         # source padding token index
-        trg_pad_idx = trg_pad_idx,         # target padding token index
-        trg_sos_idx = trg_sos_idx,         # arget start token index
         d_model = d_model,
         num_heads = num_heads,
         num_layers = num_layers, 
@@ -58,7 +54,7 @@ def train(model, dataloader, optimizer, criterion):
         trg = trg.to(device)
         optimizer.zero_grad()
 
-        output = model(src, trg[:, :-1])  # 输入不包括最后一个词
+        output = model(src, trg[:, :-1], src_pad_idx, trg_pad_idx)  # 输入不包括最后一个词
         output = output.contiguous().view(-1, output_dim)
         trg = trg[:, 1:].contiguous().view(-1)  # 目标不包括第一个词
         loss = criterion(output, trg)
@@ -75,7 +71,7 @@ def evaluate(model, dataloader, criterion):
         for src, trg in dataloader:
             src = src.to(device)
             trg = trg.to(device)
-            output = model(src, trg[:, :-1])
+            output = model(src, trg[:, :-1], src_pad_idx, trg_pad_idx)
             output_dim = output.shape[-1]
             output = output.contiguous().view(-1, output_dim)
             trg = trg[:, 1:].contiguous().view(-1)
@@ -84,7 +80,7 @@ def evaluate(model, dataloader, criterion):
     return epoch_loss / len(dataloader)
 
 # 开始训练
-n_epochs = 10
+n_epochs = 30
 
 for epoch in range(n_epochs):
     train_loss = train(model, train_dataloader, optimizer, criterion)
@@ -110,13 +106,13 @@ def translate_sentence(sentence, model, en_vocab, zh_vocab, tokenizer_en, max_le
     tokens = ['<bos>'] + tokens + ['<eos>']
     src_indices = [en_vocab[token] for token in tokens]
     src_tensor = torch.LongTensor(src_indices).unsqueeze(0).to(device)  # [1, src_len]
-    src_mask = model.make_src_mask(src_tensor)
+    src_mask = model.make_src_mask(src_tensor, src_pad_idx)
     with torch.no_grad():
         enc_output = model.encoder(src_tensor, src_mask)
     trg_indices = [zh_vocab['<bos>']]
     for i in range(max_len):
         trg_tensor = torch.LongTensor(trg_indices).unsqueeze(0).to(device)  # [1, trg_len]
-        trg_mask = model.make_trg_mask(trg_tensor)
+        trg_mask = model.make_trg_mask(trg_tensor, trg_pad_idx)
         with torch.no_grad():
             output = model.decoder(trg_tensor, enc_output, src_mask, trg_mask)
         pred_token = output.argmax(-1)[:, -1].item()

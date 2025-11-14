@@ -280,7 +280,7 @@ class Transformer(nn.Module):
             next_token = output[:, -1, :].argmax(-1, keepdim=True) #last word in the sequences.
             trg = torch.cat([trg, next_token], dim=1)
 
-            if (next_token == trg_eos_idx).all():
+            if (next_token == trg_bos_idx).all():
                 break
 
         return trg

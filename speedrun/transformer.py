@@ -202,11 +202,6 @@ class Transformer(nn.Module):
         # Vocabulary size parameters
         en_vocab_size: int,  # Source language vocabulary size
         de_vocab_size: int,  # Target language vocabulary size
-        # Special token indices
-        src_pad_idx: int,    # Source padding token index
-        trg_pad_idx: int,    # Target padding token index
-        trg_sos_idx: int,    # Target start-of-sequence token index
-        # Model architecture parameters
         d_model: int = 512,           # Embedding dimension
         num_heads: int = 8,           # Number of attention heads
         d_ff: int = 2048,             # Feed-forward dimension
@@ -237,33 +232,58 @@ class Transformer(nn.Module):
             max_seq_length=max_seq_length,
             dropout=dropout
         )
+    
+    def make_src_mask(self, src, src_pad_idx):
+        """create padding mask for the source sequence."""
+        src_mask = (src != src_pad_idx).unsqueeze(1).unsqueeze(2)
+        #              [batch_size, 1, 1, src_len] 
+        # broadcast to [batch_size, heads, src_len, src_len] in encoder attention layer.
+        return src_mask
 
-        # Save special token indices
-        self.src_pad_idx = src_pad_idx
-        self.trg_pad_idx = trg_pad_idx
-        self.trg_sos_idx = trg_sos_idx
     
-    def make_src_mask(self, src):
-        # mask padding for source sequence
-        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
-        return src_mask # [batch_size, 1, 1, src_len]
-    
-    def make_trg_mask(self, trg):
-        # mask padding and upper-matrix for target sequence
-        # trg: [batch_size, trg_len]
-        trg_pad_mask = (trg != self.trg_pad_idx).unsqueeze(1).unsqueeze(3)  #(batch_size, 1, trg_len, 1)
+    def make_trg_mask(self, trg, trg_pad_idx):
+        """padding + autoregressive mask for target."""
+        # padding mask: (batch, 1, trg_len, 1)
+        trg_pad_mask = (trg != trg_pad_idx).unsqueeze(1).unsqueeze(3)  #(batch_size, 1, trg_len, 1)
         trg_len = trg.shape[1]
+        # causal mask: (1, 1, trg_len, trg_len)
         trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=trg.device)).to(torch.bool) # 下三角
+        # broadcasting gives: (batch, 1, trg_len, trg_len)
         trg_mask = trg_pad_mask & trg_sub_mask
         return trg_mask
 
-
-    def forward(self, src, trg):
-        src_mask = self.make_src_mask(src)
-        trg_mask = self.make_trg_mask(trg)
-        enc_output = self.encoder(src, src_mask)
-        output = self.decoder(trg, enc_output, src_mask, trg_mask)
+    def forward(self, src, trg, src_pad_idx, trg_pad_idx):
+        """
+        src: (batch, src_len)
+        trg: (batch, trg_len)
+        """
+        src_mask = self.make_src_mask(src, src_pad_idx)
+        trg_mask = self.make_trg_mask(trg, trg_pad_idx)
+        en_output = self.encoder(src, src_mask)
+        output = self.decoder(trg, en_output, src_mask, trg_mask)
         return output
+    
+    def greedy_decode(self, src, trg, src_pad_idx, trg_pad_idx, trg_bos_idx, max_len=10):
+        """
+        autogressive decoding
+        """
+        src_mask = self.make_src_mask(src, src_pad_idx)
+        en_output = self.encoder(src, src_mask)
+
+        batch_size = src.size(0)
+        # create first token of the target sequences.
+        trg = torch.full( size=(batch_size, 1), fill_value=trg_bos_idx, device=src.device)
+
+        for _ in range(max_len):
+            trg_mask = self.make_trg_mask(trg, trg_pad_idx)
+            output = self.decoder(trg, en_output, src_mask, trg_mask)
+            next_token = output[:, -1, :].argmax(-1, keepdim=True) #last word in the sequences.
+            trg = torch.cat([trg, next_token], dim=1)
+
+            if (next_token == trg_eos_idx).all():
+                break
+
+        return trg
 
 
 
@@ -272,31 +292,32 @@ if __name__ == "__main__":
     model = Transformer(
                 en_vocab_size = 850,     # source vocabulary size
                 de_vocab_size = 1200,    # target vocabulary size
-                src_pad_idx = 0,         # source padding token index
-                trg_pad_idx = 0,         # target padding token index
-                trg_sos_idx = 2,         # target start token index
                 d_model = 512,
                 num_heads = 8,
                 num_layers = 6, 
-                d_ff = 2048,
+                d_ff = 1024,
                 max_seq_length = 5000,
                 dropout = 0
             )
+
+    src_pad_idx = 0         # source padding token index
+    trg_pad_idx = 0         # target padding token index
+    trg_bos_idx = 2         # target begining token index
 
     seed = 42
     torch.manual_seed(seed)
     # use CUDA
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # nulti-GPUs
-        
-    device = "cuda:1"
+        torch.cuda.manual_seed_all(seed)  # multi-GPUs
+    
+    device = "cuda:0"
     batch_size, seq_length = 3, 10
     src = torch.randint(low=0, high=850, size=(batch_size, seq_length)).to(device)
     trg = torch.randint(low=0, high=1200, size=(batch_size, seq_length)).to(device)
     model = model.to(device)
 
-    output = model(src, trg)
+    output = model(src, trg, src_pad_idx, trg_pad_idx)
     print("output.size(): ", output.size())
     print("output: ", output)
 

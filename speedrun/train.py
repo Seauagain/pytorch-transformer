@@ -10,7 +10,7 @@ import torch.optim as optim
 
 
 from transformer import Transformer
-from dataloader import *
+from dataloader import get_train_loader, get_test_dataloader
 
 
 # 检查是否有可用的 GPU
@@ -18,8 +18,16 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
 
-input_dim = src_vocab_size
-output_dim = trg_vocab_size
+traindata_path = "../dataset/translation2019zh_train50k.json"
+
+testdata_json = "../dataset/translation2019zh_train50k.json"
+
+
+train_dataloader, val_dataloader, en_vocab, zh_vocab, special_tokens = get_train_loader(train_data_path=traindata_path, batch_szie=32, val_split=0.1)
+
+
+input_dim = len(en_vocab)
+output_dim = len(zh_vocab)
 d_model = 512
 num_heads = 8
 d_ff = 2048
@@ -29,8 +37,8 @@ dropout = 0.1
 
 
 model = Transformer(  
-        en_vocab_size = src_vocab_size,    # source vocabulary size
-        de_vocab_size = trg_vocab_size,   # target vocabulary size
+        en_vocab_size = len(en_vocab),    # source vocabulary size
+        de_vocab_size = len(zh_vocab),   # target vocabulary size
         d_model = d_model,
         num_heads = num_heads,
         num_layers = num_layers, 

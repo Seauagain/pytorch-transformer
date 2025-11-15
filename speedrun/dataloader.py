@@ -119,7 +119,7 @@ def get_train_loader(train_data_path, batch_size=32, val_split=0.1):
     return train_loader, val_loader, en_vocab, zh_vocab, special_tokens
 
 
-def get_test_dataloader(test_data_path, en_vocab, zh_vocab, batch_size=32):
+def get_test_loader(test_data_path, en_vocab, zh_vocab, batch_size=32):
     en_sentences, zh_sentences = load_sentences_from_json(test_data_path)
 
     tokenizer_en = get_tokenizer('basic_english')
@@ -144,7 +144,7 @@ def get_test_dataloader(test_data_path, en_vocab, zh_vocab, batch_size=32):
 
     return test_loader, special_tokens
 
-data_json_path = "../dataset/translation2019zh_train50k.json"
+
 
 
 # # 加载原始的数据

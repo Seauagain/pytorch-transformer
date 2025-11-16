@@ -10,7 +10,7 @@ import torch.optim as optim
 
 
 from transformer import Transformer
-from dataloader import get_train_loader, get_test_dataloader
+from dataloader import get_train_loader, get_test_loader,  get_vocab_tokenizer
 
 
 # 检查是否有可用的 GPU
@@ -18,12 +18,17 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
 
-traindata_path = "../dataset/translation2019zh_train50k.json"
+train_data_path = "../dataset/translation2019zh_train50k.json"
 
-testdata_json = "../dataset/translation2019zh_train50k.json"
+testdata_json = "../dataset/translation2019zh_valid1k.json"
 
 
-train_dataloader, val_dataloader, en_vocab, zh_vocab, special_tokens = get_train_loader(train_data_path=traindata_path, batch_szie=32, val_split=0.1)
+train_dataloader, val_dataloader, en_vocab, zh_vocab, special_tokens = get_train_loader(train_data_path=train_data_path, batch_size=32, val_split=0.1)
+
+src_pad_idx = special_tokens["src_pad_idx"]
+trg_pad_idx = special_tokens["trg_pad_idx"]
+trg_bos_idx = special_tokens["trg_bos_idx"]
+trg_eos_idx = special_tokens["trg_eos_idx"]
 
 
 input_dim = len(en_vocab)
@@ -95,6 +100,10 @@ for epoch in range(n_epochs):
     val_loss = evaluate(model, val_dataloader, criterion)
     print(f'Epoch {epoch+1}/{n_epochs}, Train Loss: {train_loss:.3f}, Val Loss: {val_loss:.3f}')
 
+
+
+
+
 # Step 5: 测试与推理
 
 # 定义翻译函数
@@ -129,6 +138,13 @@ def translate_sentence(sentence, model, en_vocab, zh_vocab, tokenizer_en, max_le
             break
     trg_tokens = [zh_vocab.lookup_token(idx) for idx in trg_indices]
     return ''.join(trg_tokens[1:-1])  # 去除 <bos> 和 <eos>
+
+
+
+
+
+train_data_path = "../dataset/translation2019zh_train50k.json"
+tokenizer_en, tokenizer_zh, en_vocab, zh_vocab = get_vocab_tokenizer(train_data_path)
 
 
 # 示例测试

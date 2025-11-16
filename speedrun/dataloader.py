@@ -75,6 +75,19 @@ def process_sentence(sentence, tokenizer, vocab):
 
 
 # ============== Dataloader ==============
+def get_vocab_tokenizer(train_data_path):
+    # 加载原始的数据
+    english_sentences, chinese_sentences = load_sentences_from_json(train_data_path)
+    # 定义英文和中文的分词器
+    tokenizer_en = get_tokenizer("basic_english")
+    tokenizer_zh = lambda text: list(text)
+    # 构建英文和中文的词汇表
+    en_vocab = build_vocab(english_sentences, tokenizer_en)
+    zh_vocab = build_vocab(chinese_sentences, tokenizer_zh)
+    return tokenizer_en, tokenizer_zh, en_vocab, zh_vocab
+
+
+
 
 def get_train_loader(train_data_path, batch_size=32, val_split=0.1):
     # 加载原始的数据
@@ -103,7 +116,7 @@ def get_train_loader(train_data_path, batch_size=32, val_split=0.1):
     special_tokens = {
         'src_pad_idx': en_vocab['<pad>'],
         'trg_pad_idx': zh_vocab['<pad>'],
-        'trg_sos_idx': zh_vocab['<bos>'],
+        'trg_bos_idx': zh_vocab['<bos>'],
         'trg_eos_idx': zh_vocab['<eos>']
     }
 
@@ -133,7 +146,7 @@ def get_test_loader(test_data_path, en_vocab, zh_vocab, batch_size=32):
     special_tokens = {
         'src_pad_idx': en_vocab['<pad>'],
         'trg_pad_idx': zh_vocab['<pad>'],
-        'trg_sos_idx': zh_vocab['<bos>'],
+        'trg_bos_idx': zh_vocab['<bos>'],
         'trg_eos_idx': zh_vocab['<eos>']
     }
 
@@ -176,7 +189,7 @@ def get_test_loader(test_data_path, en_vocab, zh_vocab, batch_size=32):
 # trg_vocab_size = len(zh_vocab)
 # src_pad_idx = en_vocab['<pad>']         # source padding token index
 # trg_pad_idx = zh_vocab['<pad>']         # target padding token index
-# trg_sos_idx = zh_vocab['<bos>']         # target start token 
+# trg_bos_idx = zh_vocab['<bos>']         # target start token 
 
 # # 划分训练集和验证集
 # train_size = int(0.9 * len(dataset))  

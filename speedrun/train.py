@@ -1,29 +1,38 @@
 """
 @author : seauagain
-@date : 2025.11.01 
+@date   : 2025.11.01
+@desc   : Training & Inference script for Transformer translation model
 """
-
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import os
+from typing import Tuple
 
 from transformer import Transformer
-from dataloader import get_train_loader, get_test_loader,  get_vocab_tokenizer
+from dataloader import (
+    get_train_loader,
+    get_test_loader,
+    get_vocab_tokenizer
+)
 
 
-# 检查是否有可用的 GPU
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(f'Using device: {device}')
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"[INFO] Using device: {device}")
+
+train_json = "../dataset/translation2019zh_train50k.json"
+valid_json = "../dataset/translation2019zh_valid1k.json"
+ckpt_path = "./checkpoints/best_transformer.ckpt"
+os.makedirs("./checkpoints", exist_ok=True)
 
 
-train_data_path = "../dataset/translation2019zh_train50k.json"
-
-testdata_json = "../dataset/translation2019zh_valid1k.json"
-
-
-train_dataloader, val_dataloader, en_vocab, zh_vocab, special_tokens = get_train_loader(train_data_path=train_data_path, batch_size=32, val_split=0.1)
+# 1. 数据加载
+train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_loader(
+    train_data_path=train_json,
+    batch_size=32,
+    val_split=0.1
+)
 
 src_pad_idx = special_tokens["src_pad_idx"]
 trg_pad_idx = special_tokens["trg_pad_idx"]
@@ -31,132 +40,181 @@ trg_bos_idx = special_tokens["trg_bos_idx"]
 trg_eos_idx = special_tokens["trg_eos_idx"]
 
 
-input_dim = len(en_vocab)
-output_dim = len(zh_vocab)
-d_model = 512
-num_heads = 8
-d_ff = 2048
-num_layers = 6
-max_seq_length = 5000
-dropout = 0.1
+# 2. Transformer
+model = Transformer(
+    en_vocab_size=len(en_vocab),
+    de_vocab_size=len(zh_vocab),
+    d_model=512,
+    num_heads=8,
+    num_layers=6,
+    d_ff=2048,
+    max_seq_length=5000,
+    dropout=0.1
+).to(device)
 
-
-model = Transformer(  
-        en_vocab_size = len(en_vocab),    # source vocabulary size
-        de_vocab_size = len(zh_vocab),   # target vocabulary size
-        d_model = d_model,
-        num_heads = num_heads,
-        num_layers = num_layers, 
-        d_ff = d_ff,
-        max_seq_length = max_seq_length,
-        dropout = dropout
-    ).to(device)
-
-# 定义损失函数和优化器
 criterion = nn.CrossEntropyLoss(ignore_index=trg_pad_idx)
-optimizer = optim.Adam(model.parameters(), lr=0.0001)
+optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-# Step 4: 模型训练与验证
 
-# 定义训练函数
-def train(model, dataloader, optimizer, criterion):
+# training
+def train_one_epoch(model, dataloader, criterion, optimizer):
     model.train()
-    epoch_loss = 0
+    epoch_loss = 0.0
+
     for src, trg in dataloader:
         src = src.to(device)
         trg = trg.to(device)
-        optimizer.zero_grad()
 
-        output = model(src, trg[:, :-1], src_pad_idx, trg_pad_idx)  # 输入不包括最后一个词
-        output = output.contiguous().view(-1, output_dim)
-        trg = trg[:, 1:].contiguous().view(-1)  # 目标不包括第一个词
-        loss = criterion(output, trg)
+        # trg_input: 去除句子末尾
+        trg_input = trg[:, :-1]
+        # trg_output: 去除句子开头
+        trg_output = trg[:, 1:].contiguous().view(-1)
+
+        optimizer.zero_grad()
+        output = model(src, trg_input, src_pad_idx, trg_pad_idx)
+
+        output = output.contiguous().view(-1, output.size(-1))
+        loss = criterion(output, trg_output)
+
         loss.backward()
         optimizer.step()
+
         epoch_loss += loss.item()
+
     return epoch_loss / len(dataloader)
 
-# 定义验证函数
-def evaluate(model, dataloader, criterion):
+
+def evaluate( model, dataloader, criterion):
     model.eval()
-    epoch_loss = 0
+    epoch_loss = 0.0
+
     with torch.no_grad():
         for src, trg in dataloader:
             src = src.to(device)
             trg = trg.to(device)
-            output = model(src, trg[:, :-1], src_pad_idx, trg_pad_idx)
-            output_dim = output.shape[-1]
-            output = output.contiguous().view(-1, output_dim)
-            trg = trg[:, 1:].contiguous().view(-1)
-            loss = criterion(output, trg)
+
+            trg_input = trg[:, :-1]
+            trg_output = trg[:, 1:].contiguous().view(-1)
+
+            output = model(src, trg_input, src_pad_idx, trg_pad_idx)
+            output = output.contiguous().view(-1, output.size(-1))
+
+            loss = criterion(output, trg_output)
             epoch_loss += loss.item()
+
     return epoch_loss / len(dataloader)
 
-# 开始训练
-n_epochs = 30
 
-for epoch in range(n_epochs):
-    train_loss = train(model, train_dataloader, optimizer, criterion)
-    val_loss = evaluate(model, val_dataloader, criterion)
-    print(f'Epoch {epoch+1}/{n_epochs}, Train Loss: {train_loss:.3f}, Val Loss: {val_loss:.3f}')
+# 4. Trainer 
+class Trainer:
+    def __init__(self, model, optimizer, criterion, ckpt_path):
+        self.model = model
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.ckpt_path = ckpt_path
+        self.best_val_loss = float("inf")
+
+    def save_checkpoint(self):
+        torch.save({
+            "model_state": self.model.state_dict(),
+            "optimizer_state": self.optimizer.state_dict()
+        }, self.ckpt_path)
+        print(f"[INFO] Checkpoint saved to {self.ckpt_path}")
+
+    def load_checkpoint(self):
+        if not os.path.exists(self.ckpt_path):
+            print("[WARN] No checkpoint found.")
+            return False
+
+        ckpt = torch.load(self.ckpt_path, map_location=device)
+        self.model.load_state_dict(ckpt["model_state"])
+        self.optimizer.load_state_dict(ckpt["optimizer_state"])
+        print(f"[INFO] Loaded checkpoint from {self.ckpt_path}")
+        return True
+
+    def train(self, train_loader, val_loader, epochs):
+        for epoch in range(1, epochs + 1):
+            train_loss = train_one_epoch(
+                self.model,
+                train_loader,
+                self.criterion,
+                self.optimizer
+            )
+            val_loss = evaluate(
+                self.model,
+                val_loader,
+                self.criterion
+            )
+
+            print(
+                f"[Epoch {epoch:02d}] "
+                f"Train Loss: {train_loss:.3f} | "
+                f"Val Loss: {val_loss:.3f}"
+            )
+
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                self.save_checkpoint()
 
 
+trainer = Trainer(model, optimizer, criterion, ckpt_path)
+trainer.train(train_loader, val_loader, epochs=30)
 
 
+# 6. inference
 
-# Step 5: 测试与推理
-
-# 定义翻译函数
-def translate_sentence(sentence, model, en_vocab, zh_vocab, tokenizer_en, max_len=500):
-    """
-    翻译英文句子为中文
-    :param sentence: 英文句子（字符串）
-    :param model: 训练好的 Transformer 模型
-    :param en_vocab: 英文词汇表
-    :param zh_vocab: 中文词汇表
-    :param tokenizer_en: 英文分词器
-    :param max_len: 最大翻译长度
-    :return: 中文翻译（字符串）
-    """
+def greedy_translate(
+    sentence: str,
+    model,
+    en_vocab,
+    zh_vocab,
+    tokenizer_en,
+    max_len=200
+) -> str:
     model.eval()
-    tokens = tokenizer_en(sentence)
-    tokens = ['<bos>'] + tokens + ['<eos>']
-    src_indices = [en_vocab[token] for token in tokens]
-    src_tensor = torch.LongTensor(src_indices).unsqueeze(0).to(device)  # [1, src_len]
-    src_mask = model.make_src_mask(src_tensor, src_pad_idx)
+
+    # Build source sentence
+    tokens = ["<bos>"] + tokenizer_en(sentence) + ["<eos>"]
+    src_idx = [en_vocab[token] for token in tokens]
+    src = torch.tensor(src_idx).unsqueeze(0).to(device)  # [1, src_len]
+
+    src_mask = model.make_src_mask(src, src_pad_idx)
+
     with torch.no_grad():
-        enc_output = model.encoder(src_tensor, src_mask)
-    trg_indices = [zh_vocab['<bos>']]
-    for i in range(max_len):
-        trg_tensor = torch.LongTensor(trg_indices).unsqueeze(0).to(device)  # [1, trg_len]
+        enc_out = model.encoder(src, src_mask)
+
+    trg_indices = [zh_vocab["<bos>"]]
+
+    for _ in range(max_len):
+        trg_tensor = torch.tensor(trg_indices).unsqueeze(0).to(device)
         trg_mask = model.make_trg_mask(trg_tensor, trg_pad_idx)
+
         with torch.no_grad():
-            output = model.decoder(trg_tensor, enc_output, src_mask, trg_mask)
-        pred_token = output.argmax(-1)[:, -1].item()
-        trg_indices.append(pred_token)
-        if pred_token == zh_vocab['<eos>']:
+            dec_out = model.decoder(trg_tensor, enc_out, src_mask, trg_mask)
+
+        next_token = dec_out.argmax(dim=-1)[0, -1].item()
+        trg_indices.append(next_token)
+
+        if next_token == zh_vocab["<eos>"]:
             break
-    trg_tokens = [zh_vocab.lookup_token(idx) for idx in trg_indices]
-    return ''.join(trg_tokens[1:-1])  # 去除 <bos> 和 <eos>
+
+    # Convert to readable text
+    result_tokens = [
+        zh_vocab.lookup_token(idx)
+        for idx in trg_indices[1:-1]
+    ]
+    return "".join(result_tokens)
 
 
+# 7. decoding
+print("\n[INFO] Loading checkpoint for inference...")
+trainer.load_checkpoint()
 
+tokenizer_en, tokenizer_zh, en_vocab, zh_vocab = get_vocab_tokenizer(train_json)
 
-
-train_data_path = "../dataset/translation2019zh_train50k.json"
-tokenizer_en, tokenizer_zh, en_vocab, zh_vocab = get_vocab_tokenizer(train_data_path)
-
-
-# 示例测试
-input_sentence = "How are you?"
-translation = translate_sentence(input_sentence, model, en_vocab, zh_vocab, tokenizer_en)
-print(f"英文句子: {input_sentence}")
-print(f"中文翻译: {translation}")
-
-# 您可以在此处输入其他英文句子进行测试
 while True:
-    input_sentence = input("请输入英文句子（输入 'quit' 退出）：")
-    if input_sentence.lower() == 'quit':
+    text = input("\n请输入英文句子 ('quit' 退出)：")
+    if text.lower() == "quit":
         break
-    translation = translate_sentence(input_sentence, model, en_vocab, zh_vocab, tokenizer_en)
-    print(f"中文翻译: {translation}")
+    result = greedy_translate(text, model, en_vocab, zh_vocab, tokenizer_en)
+    print(f"中文翻译：{result}")

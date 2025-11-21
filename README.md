@@ -25,3 +25,9 @@ Enjoy training transformer.
 ```bash 
 cd speedrun && python train.py
 ```
+
+
+## Reference
+
+- [Transformer Model Tutorial in PyTorch: From Theory to Code](https://www.datacamp.com/tutorial/building-a-transformer-with-py-torch)
+

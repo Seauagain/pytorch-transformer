@@ -132,7 +132,7 @@ class Trainer:
         print(f"[INFO] Loaded checkpoint from {self.ckpt_path}")
         return True
 
-    def train(self, train_loader, val_loader, epochs):
+    def run_training(self, train_loader, val_loader, epochs):
         for epoch in range(1, epochs + 1):
             train_loss = train_one_epoch(
                 self.model,
@@ -158,19 +158,12 @@ class Trainer:
 
 
 trainer = Trainer(model, optimizer, criterion, ckpt_path)
-trainer.train(train_loader, val_loader, epochs=30)
+trainer.run_training(train_loader, val_loader, epochs=30)
 
 
 # 6. inference
 
-def greedy_translate(
-    sentence: str,
-    model,
-    en_vocab,
-    zh_vocab,
-    tokenizer_en,
-    max_len=200
-) -> str:
+def greedy_translate(sentence, model, en_vocab, zh_vocab, tokenizer_en, max_len=200):
     model.eval()
 
     # Build source sentence

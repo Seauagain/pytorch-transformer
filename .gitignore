@@ -1,6 +1,6 @@
 ## basic 
 __pycache__/
-
+__MACOS*
 .DS_Store
 
 

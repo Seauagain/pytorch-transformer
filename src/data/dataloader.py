@@ -7,7 +7,7 @@ import json
 import torch 
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, DistributedSampler
 from torch.nn.utils.rnn import pad_sequence
 # from torch.utils.data import random_split
 
@@ -89,7 +89,7 @@ def get_vocab_tokenizer(train_data_path):
 
 
 
-def get_train_loader(train_data_path, batch_size=32, val_split=0.1):
+def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_split=0.1, ddp=False, rank=0, wrold_size=1):
     # 加载原始的数据
     english_sentences, chinese_sentences = load_sentences_from_json(train_data_path)
     # 定义英文和中文的分词器
@@ -120,12 +120,18 @@ def get_train_loader(train_data_path, batch_size=32, val_split=0.1):
         'trg_eos_idx': zh_vocab['<eos>']
     }
 
-    train_loader = DataLoader(
-        train_data, batch_size=batch_size, shuffle=True,
-        collate_fn=lambda batch: collate_fn(batch, special_tokens['src_pad_idx'], special_tokens['trg_pad_idx'])
-    )
+    if ddp:
+        train_sampler = DistributedSampler(train_data, num_replicas=wrold_size, rank=rank,shuffle=True)
+        # shuffle = False because sampler controls it.
+        train_loader = DataLoader(train_data, batch_size=batch_size, sampler=train_sampler, shuffle=False, num_workers=num_workers, pin_memory=True,
+                                  collate_fn=lambda batch: collate_fn(batch, special_tokens['src_pad_idx'], special_tokens['trg_pad_idx']) )
+    else:
+        train_loader = DataLoader(
+            train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers,pin_memory=True,
+            collate_fn=lambda batch: collate_fn(batch, special_tokens['src_pad_idx'], special_tokens['trg_pad_idx'])
+            )
     val_loader = DataLoader(
-        val_data, batch_size=batch_size, shuffle=False,
+        val_data, batch_size=batch_size, num_workers=num_workers, pin_memory=True, shuffle=False,
         collate_fn=lambda batch: collate_fn(batch, special_tokens['src_pad_idx'], special_tokens['trg_pad_idx'])
     )
 

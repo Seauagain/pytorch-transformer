@@ -76,10 +76,11 @@ class Trainer:
         self.world_size = world_size
         self.use_ddp = True
 
-        dist.initz_process_group(backend=backend, rank=rank, world_size = world_size)
+        dist.init_process_group(backend=backend, rank=rank, world_size = world_size)
         torch.cuda.set_device(rank)
         self.device = torch.device(f"cuda:{rank}")
-        self.network = DDP(self.mode, device_ids = [rank])
+        self.network = self.network.to(self.device)
+        self.network = DDP(self.network, device_ids = [rank])
         logging.info(f"Process {rank}: Model initialized with DDP")
     
     def cleanup_ddp(self):
@@ -94,7 +95,7 @@ class Trainer:
     def build_optimizer(self, config):
         """the optimizer and lr scheduler"""
         self.optimizer = optim.Adam(self.network.parameters(), lr=config.init_lr) 
-        self.lr_scheduler = self.warmup_scheduler(self.optimizer, config.warmup_epochs, config.max_epoch)
+        self.lr_scheduler = self.warmup_scheduler(self.optimizer, config.warmup_epochs, config.max_epochs)
 
     def warmup_scheduler(self, optimizer, warmup_epochs, max_epoch):
         """创建带warmup的学习率调度器"""
@@ -125,7 +126,7 @@ class Trainer:
 
 
         ########################### user configuration ###################################
-        train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_val_loader(config.train_data_path, batch_size=config.batch_size, val_split=config.split_ratio, ddp=self.use_ddp, rank=self.rank, wrold_size=self.world_size)
+        train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_val_loader(config.train_data_path, batch_size=config.batch_size, val_split=config.split_ratio, ddp=self.use_ddp, rank=self.rank, world_size=self.world_size)
         ########################### user configuration ###################################
         
         # 优化器、损失函数与学习率调度器
@@ -142,24 +143,24 @@ class Trainer:
 
         start_time = time.time()
         
-        for epoch in range(1, config.max_epoch+1):
+        for epoch in range(1, config.max_epochs + 1):
             if self.use_ddp:
                 train_loader.sampler.set_epoch(epoch) # reset sampler seed. 
 
             # training
             epoch_start_time = time.time()
-            train_loss = self.train_epoch(train_loader)
+            train_loss = self.train_epoch(train_loader, config)
             train_losses.append(train_loss)
 
             # validation
-            if epoch % config.validloss_interval == 0 or epoch == config.max_epoch:
-                val_loss = self.validate_epoch(val_loader, self.criterion)
+            if epoch % config.validloss_interval == 0 or epoch == config.max_epochs:
+                val_loss = self.validate_epoch(val_loader, config)
                 val_losses.append(val_loss)
                 epoch_time = time.time() - epoch_start_time
-                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^5} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Valid loss: {val_loss:.5f} | Time: {epoch_time:.2f}s')
+                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Valid loss: {val_loss:.5f} | Time: {epoch_time:.2f}s')
             else:
                 epoch_time = time.time() - epoch_start_time
-                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^5} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Time: {epoch_time:.2f}s')
+                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Time: {epoch_time:.2f}s')
             
             if epoch % config.saveloss_interval == 0 and (not self.use_ddp or self.rank == 0):
                 self.save_loss(train_losses, val_losses)
@@ -176,6 +177,97 @@ class Trainer:
             self.save_checkpoint(epoch, train_losses, val_losses)
             timecost = time.time() - start_time
             logging.info(f"Training completed successfully, total time cost: {timecost/3600:.2f} h")
+
+    def train_epoch(self, dataloader, config):
+        """train for one epoch"""
+        self.network.train()
+        total_loss = 0
+        num_batches = 0
+        for _, (src, trg) in enumerate(dataloader):
+            src, trg = src.to(self.device), trg.to(self.device)
+            # trg_input: 去除句子末尾
+            trg_input = trg[:, :-1]
+            # trg_output: 去除句子开头
+            trg_output = trg[:, 1:].contiguous().view(-1)
+            self.optimizer.zero_grad()
+            output = self.network(src, trg_input, config.src_pad_idx, config.trg_pad_idx)
+            output = output.contiguous().view(-1, output.size(-1))
+            loss = self.criterion(output, trg_output)
+            loss.backward()
+            self.optimizer.step()
+            if self.lr_scheduler:
+                self.lr_scheduler.step()
+            total_loss += loss.item()
+            num_batches += 1
+        return total_loss / num_batches
+    
+    def validate_epoch(self, dataloader, config):
+        """valiadation for one epoch"""
+        self.network.eval()
+        total_loss = 0
+        num_batches = 0
+        with torch.no_grad():
+            for src, trg in dataloader:
+                src = src.to(self.device)
+                trg = trg.to(self.device)
+
+                trg_input = trg[:, :-1]
+                trg_output = trg[:, 1:].contiguous().view(-1)
+
+                output = self.network(src, trg_input, config.src_pad_idx, config.trg_pad_idx)
+                output = output.contiguous().view(-1, output.size(-1))
+                loss = self.criterion(output, trg_output)
+                total_loss += loss.item()
+                num_batches += 1
+        return total_loss / num_batches
+    
+    def save_loss(self, train_losses, val_losses):
+        pass
+
+    def plot_loss(self, train_losses, val_losses, save_path='loss_plot.png'):
+        if not self.use_ddp or self.rank == 0:
+            plt.figure(figsize=(10, 6))
+            plt.plot(train_losses, label='Training Loss', linewidth=2)
+            if val_losses:
+                plt.plot(val_losses, label='Validation Loss', linewidth=2)
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.title('Training Progress')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.close()
+    
+    def save_checkpoint(self, epoch, train_losses, val_losses):
+        ckpt_path = os.path.join(self.model_root, self.model_name, f"ckpt{epoch}.pth")
+        if not self.use_ddp or self.rank == 0:
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': self.network.module.state_dict() if self.use_ddp else self.network.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'scheduler_state_dict': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'config': self.config.__dict__
+            }
+            torch.save(checkpoint, ckpt_path)
+    
+
+
+
+'''' 
+# templates
+
+    @staticmethod
+    def find_free_port():
+        """find a port available for DDP"""
+        import socket 
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
 
     def train_epoch(self, dataloader):
         """train for one epoch"""
@@ -208,44 +300,6 @@ class Trainer:
                 total_loss += loss.item()
                 num_batches += 1
         return total_loss / num_batches
-    
-    def save_loss(self):
-        pass
 
-    def plot_loss(self, train_losses, val_losses, save_path='loss_plot.png'):
-        if not self.use_ddp or self.rank == 0:
-            plt.figure(figsize=(10, 6))
-            plt.plot(train_losses, label='Training Loss', linewidth=2)
-            if val_losses:
-                plt.plot(val_losses, label='Validation Loss', linewidth=2)
-            plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.title('Training Progress')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            plt.close()
-    
-    def save_checkpoint(self, epoch, train_losses, val_losses):
-        ckpt_path = os.path.join(self.model_root, self.model_name, f"ckpt{epoch}.pth")
-        if not self.use_ddp or self.rank == 0:
-            checkpoint = {
-                'epoch': epoch,
-                'model_state_dict': self.network.module.state_dict() if self.use_ddp else self.network.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-                'scheduler_state_dict': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
-                'train_losses': train_losses,
-                'val_losses': val_losses,
-                'config': self.config.__dict__
-            }
-            torch.save(checkpoint, ckpt_path)
-    
-    # @staticmethod
-    # def find_free_port():
-    #     """find a port available for DDP"""
-    #     import socket 
-    #     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #     s.bind(("", 0))
-    #     port = s.getsockname()[1]
-    #     s.close()
-    #     return port
+
+'''

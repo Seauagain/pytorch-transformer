@@ -31,3 +31,5 @@ cd speedrun && python train.py
 
 - [Transformer Model Tutorial in PyTorch: From Theory to Code](https://www.datacamp.com/tutorial/building-a-transformer-with-py-torch)
 
+- [nlp_chinese_corpus](https://github.com/brightmart/nlp_chinese_corpus)s
+

@@ -204,7 +204,7 @@ class Transformer(nn.Module):
         de_vocab_size: int,  # Target language vocabulary size
         d_model: int = 512,           # Embedding dimension
         num_heads: int = 8,           # Number of attention heads
-        d_ff: int = 2048,             # Feed-forward dimension
+        d_ff: int = 1024,             # Feed-forward dimension
         num_layers: int = 6,          # Number of encoder/decoder layers
         max_seq_length: int = 5000,    # Maximum sequence length
         dropout: float = 0.1          # Dropout rate

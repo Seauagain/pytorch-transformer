@@ -9,7 +9,7 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 from torch.utils.data import Dataset, DataLoader, random_split, DistributedSampler
 from torch.nn.utils.rnn import pad_sequence
-# from torch.utils.data import random_split
+
 
 ## torchtext==0.13 torch==1.12 work fine for me 
 
@@ -63,15 +63,14 @@ def build_vocab(sentences, tokenizer):
     vocab.set_default_index(vocab['<unk>'])
     return vocab
 
-def process_sentence(sentence, tokenizer, vocab):
+def process_sentence(sentence, tokenizer, vocab, bos_token="<bos>", eos_token="<eos>"):
     """
     convert sentences (string/token) to indices (number/id). Add <bos> and <eos>
     """
     tokens = tokenizer(sentence)
-    tokens = ['<bos>'] + tokens + ['<eos>']
+    tokens = [bos_token] + tokens + [eos_token]
     indices = [vocab[token] for token in tokens]
     return indices
-
 
 
 # ============== Dataloader ==============
@@ -89,24 +88,43 @@ def get_vocab_tokenizer(train_data_path):
 
 
 
-def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_split=0.1, ddp=False, rank=0, world_size=1):
+def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_split=0.1, ddp=False, rank=0, world_size=1, tokenizer="Helsinki-NLP"):
     # 加载原始的数据
     english_sentences, chinese_sentences = load_sentences_from_json(train_data_path)
-    # 定义英文和中文的分词器
-    tokenizer_en = get_tokenizer("basic_english")
-    tokenizer_zh = lambda text: list(text)
-    # 构建英文和中文的词汇表
-    en_vocab = build_vocab(english_sentences, tokenizer_en)
-    zh_vocab = build_vocab(chinese_sentences, tokenizer_zh)
-    # 将所有句子转换为索引序列
-    en_sequences = [process_sentence(s, tokenizer_en, en_vocab) for s in english_sentences]
-    zh_sequences = [process_sentence(s, tokenizer_zh, zh_vocab) for s in chinese_sentences]
 
-    # 查看示例句子的索引序列
-    print("示例英文句子序列：", english_sentences[0])
-    print("示例中文句子序列：", chinese_sentences[0])
-    print("示例英文句子索引序列：", en_sequences[0])
-    print("示例中文句子索引序列：", zh_sequences[0])
+    if tokenizer == "basic":
+        # 定义英文和中文的分词器
+        tokenizer_en = get_tokenizer("basic_english")
+        tokenizer_zh = lambda text: list(text)
+        # 构建英文和中文的词汇表
+        en_vocab = build_vocab(english_sentences, tokenizer_en)
+        zh_vocab = build_vocab(chinese_sentences, tokenizer_zh)
+
+        # 将所有句子转换为索引序列
+        en_sequences = [process_sentence(s, tokenizer_en, en_vocab) for s in english_sentences]
+        zh_sequences = [process_sentence(s, tokenizer_zh, zh_vocab) for s in chinese_sentences]
+
+    elif tokenizer == "Helsinki-NLP":
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained("tokenizer/Helsinki-NLP/opus-mt-zh-en")
+        vocab = tokenizer.get_vocab()
+        tokenizer.add_special_tokens({'bos_token': '<bos>'})
+
+        tokenizer_en = tokenizer_zh = tokenizer
+        en_vocab = zh_vocab = vocab
+        # 将所有句子转换为索引序列
+        en_sequences = [tokenizer_en( "<bos>" + s + "</s>" )["input_ids"] for s in english_sentences]
+        zh_sequences = [tokenizer_zh( "<bos>" + s + "</s>" )["input_ids"] for s in chinese_sentences]
+
+    else:
+        pass 
+    
+
+    # # 查看示例句子的索引序列
+    # print("示例英文句子序列：", english_sentences[0])
+    # print("示例中文句子序列：", chinese_sentences[0])
+    # print("示例英文句子索引序列：", en_sequences[0])
+    # print("示例中文句子索引序列：", zh_sequences[0])
 
     dataset = TranslationDataset(en_sequences, zh_sequences)
     train_size = int((1 - val_split) * len(dataset))
@@ -121,8 +139,8 @@ def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_spli
     } 
 
     if ddp:
-        per_gpu_batch_size = batch_size // world_size
-        per_gpu_batch_size = batch_size // 4
+        # per_gpu_batch_size = batch_size // world_size
+        per_gpu_batch_size = batch_size 
         train_sampler = DistributedSampler(train_data, num_replicas=world_size, rank=rank,shuffle=True)
         # shuffle = False because sampler controls it.
         train_loader = DataLoader(train_data, batch_size=per_gpu_batch_size, sampler=train_sampler, shuffle=False, num_workers=num_workers, pin_memory=True,

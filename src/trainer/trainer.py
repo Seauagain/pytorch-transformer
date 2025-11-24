@@ -55,7 +55,7 @@ class Trainer:
     
     def build_network(self, config):
         """create networks"""
-        from src.model.transformer import Transformer
+        from src.model import Transformer
         network = Transformer(
                             en_vocab_size=config.en_vocab_size,
                             de_vocab_size=config.zh_vocab_size,

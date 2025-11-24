@@ -21,7 +21,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from src.data.dataloader import get_train_val_loader
 
 class Trainer:
-    def __init__(self, config) -> None:
+    def __init__(self, config, logger=None) -> None:
         self.config = config 
         self.device = config.device
         self.rank = 0
@@ -31,6 +31,8 @@ class Trainer:
         self.was_initialized = False
         self.model_root = config.model_root
         self.model_name = config.model_name
+
+        self.logger = logger
 
     def initialize(self, config):
         """
@@ -81,7 +83,7 @@ class Trainer:
         self.device = torch.device(f"cuda:{rank}")
         self.network = self.network.to(self.device)
         self.network = DDP(self.network, device_ids = [rank])
-        logging.info(f"Process {rank}: Model initialized with DDP")
+        self.logger.info(f"Process {rank}: Model initialized with DDP", process="all")
     
     def cleanup_ddp(self):
         """clean up the settings for DDP"""
@@ -126,7 +128,7 @@ class Trainer:
 
 
         ########################### user configuration ###################################
-        train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_val_loader(config.train_data_path, batch_size=config.batch_size, val_split=config.split_ratio, ddp=self.use_ddp, rank=self.rank, world_size=self.world_size)
+        train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_val_loader(config.train_data_path, batch_size=config.batch_size, val_split=config.valid_ratio, ddp=self.use_ddp, rank=self.rank, world_size=self.world_size)
         ########################### user configuration ###################################
         
         # 优化器、损失函数与学习率调度器
@@ -157,10 +159,10 @@ class Trainer:
                 val_loss = self.validate_epoch(val_loader, config)
                 val_losses.append(val_loss)
                 epoch_time = time.time() - epoch_start_time
-                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Valid loss: {val_loss:.5f} | Time: {epoch_time:.2f}s')
+                self.logger.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Valid loss: {val_loss:.5f} | Time: {epoch_time:.2f}s', process="all")
             else:
                 epoch_time = time.time() - epoch_start_time
-                logging.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Time: {epoch_time:.2f}s')
+                self.logger.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Time: {epoch_time:.2f}s', process="all")
             
             if epoch % config.saveloss_interval == 0 and (not self.use_ddp or self.rank == 0):
                 self.save_loss(train_losses, val_losses)
@@ -176,7 +178,7 @@ class Trainer:
             self.plot_loss(train_losses, val_losses)
             self.save_checkpoint(epoch, train_losses, val_losses)
             timecost = time.time() - start_time
-            logging.info(f"Training completed successfully, total time cost: {timecost/3600:.2f} h")
+            self.logger.info(f"Training completed successfully, total time cost: {timecost/3600:.2f} h")
 
     def train_epoch(self, dataloader, config):
         """train for one epoch"""
@@ -255,8 +257,7 @@ class Trainer:
 
 
 
-'''' 
-# templates
+'''deprecated code
 
     @staticmethod
     def find_free_port():
@@ -267,7 +268,6 @@ class Trainer:
         port = s.getsockname()[1]
         s.close()
         return port
-
 
     def train_epoch(self, dataloader):
         """train for one epoch"""

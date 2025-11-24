@@ -2,6 +2,7 @@
 __pycache__/
 __MACOS*
 .DS_Store
+./results
 
 
 # Byte-compiled / optimized / DLL files

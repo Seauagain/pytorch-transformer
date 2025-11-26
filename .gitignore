@@ -3,6 +3,7 @@ __pycache__/
 __MACOS*
 .DS_Store
 ./results
+./tokenizer
 
 
 # Byte-compiled / optimized / DLL files

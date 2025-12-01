@@ -152,17 +152,18 @@ class Trainer:
             # training
             epoch_start_time = time.time()
             train_loss = self.train_epoch(train_loader, config)
+
+            train_losses.append( [epoch, train_loss] )
             
 
             # validation
             if epoch % config.validloss_interval == 0 or epoch == config.max_epochs:
                 val_loss = self.validate_epoch(val_loader, config)
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
+                val_losses.append( [epoch, val_loss] )
                 epoch_time = time.time() - epoch_start_time
                 self.logger.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Valid loss: {val_loss:.5f} | Time: {epoch_time:.2f}s', process="all")
             else:
-                train_losses.append(train_loss)
+        
                 epoch_time = time.time() - epoch_start_time
                 self.logger.info(f'Epoch: {epoch}/{config.max_epochs}{"":^2} | Rank: {self.rank:^2} | Train loss: {train_loss:.5f} | Time: {epoch_time:.2f}s', process="all")
             
@@ -232,9 +233,15 @@ class Trainer:
     def plot_loss(self, train_losses, val_losses, save_path='loss_plot.png'):
         if not self.use_ddp or self.rank == 0:
             plt.figure(figsize=(10, 6))
-            plt.plot(train_losses, label='Training Loss', linewidth=2)
+
+            if train_losses:
+                train_steps = [x[0] for x in train_losses]             # 提取 steps
+                train_vals = [x[1] for x in train_losses]              # 提取 loss values
+                plt.plot(train_steps, train_vals, label='Training Loss', linewidth=2)
             if val_losses:
-                plt.plot(val_losses, label='Validation Loss', linewidth=2)
+                val_steps = [x[0] for x in val_losses]
+                val_vals = [x[1] for x in val_losses]
+                plt.plot(val_steps, val_vals, label='Validation Loss', linewidth=2)
             plt.xlabel('Epoch')
             plt.ylabel('Loss')
             plt.title('Training Progress')

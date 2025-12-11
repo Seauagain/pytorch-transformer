@@ -30,9 +30,16 @@ def main():
     # }
 
     config = default_parser().parse_args()
+
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("tokenizer/Helsinki-NLP/opus-mt-zh-en")
+    tokenizer.add_special_tokens({'bos_token': '<bos>'})
+    vocab = tokenizer.get_vocab()
+    
+
     # config = dict2attr(config)
-    config.en_vocab_size = 70608
-    config.zh_vocab_size =  5350
+    config.en_vocab_size = len(vocab)
+    config.zh_vocab_size = len(vocab)
     config.d_model = 512
     config.d_ff = 1024
     config.max_seq_length = 5000
@@ -40,17 +47,17 @@ def main():
     config.nums_heads = 8
     config.num_layers = 6
 
-    config.train_data_path = "./dataset/translation2019zh_train50k.json"
+    config.train_data_path = "./dataset/translation2019zh_train.json"
     config.valid_ratio = 0.1
     config.init_lr = 1e-4
 
     # from src.data.dataloader import get_train_val_loader
     # train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_val_loader(config.train_data_path, batch_size=config.batch_size, val_split=config.valid_ratio)
-    config.src_pad_idx = 1         # 1 1 2 3
-    config.trg_pad_idx = 1
-    config.trg_bos_idx = 2
-    config.trg_eos_idx = 3
 
+    config.src_pad_idx = tokenizer.pad_token_id
+    config.trg_pad_idx = tokenizer.pad_token_id
+    config.trg_bos_idx = tokenizer.bos_token_id
+    config.trg_eos_idx = tokenizer.eos_token_id
 
     import os 
     model_dir = os.path.join(config.model_root, config.model_name)

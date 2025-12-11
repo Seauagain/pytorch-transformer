@@ -117,7 +117,9 @@ class DistributedLogger:
         if self.is_main_proc:
             for key, value in args.__dict__.items():
                 logging.info(f"{key}: {value}")
-            logging.info(f'command: {" ".join(sys.argv)}')
+                
+            import shlex
+            logging.info(f'command: {shlex.join(sys.argv)}')
             
 
 

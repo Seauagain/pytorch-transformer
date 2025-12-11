@@ -1,7 +1,6 @@
 """
 @author : seauagain
 @date   : 2025.11.01
-@desc   : Training & Inference script for Transformer translation model
 """
 
 import torch
@@ -9,9 +8,10 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 from typing import Tuple
+import time 
 
 from transformer import Transformer
-from dataloader import (
+from dataloader import ( 
     get_train_loader,
     get_test_loader,
     get_vocab_tokenizer
@@ -33,6 +33,9 @@ train_loader, val_loader, en_vocab, zh_vocab, special_tokens = get_train_loader(
     batch_size=32,
     val_split=0.1
 )
+
+
+print("vocab size: ", len(en_vocab), len(zh_vocab))
 
 src_pad_idx = special_tokens["src_pad_idx"]
 trg_pad_idx = special_tokens["trg_pad_idx"]
@@ -134,6 +137,7 @@ class Trainer:
 
     def run_training(self, train_loader, val_loader, epochs):
         for epoch in range(1, epochs + 1):
+            epoch_start = time.time()
             train_loss = train_one_epoch(
                 self.model,
                 train_loader,
@@ -145,11 +149,13 @@ class Trainer:
                 val_loader,
                 self.criterion
             )
-
+            epoch_end = time.time()
+            time_diff = epoch_end - epoch_start
             print(
                 f"[Epoch {epoch:02d}] "
                 f"Train Loss: {train_loss:.3f} | "
-                f"Val Loss: {val_loss:.3f}"
+                f"Val Loss: {val_loss:.3f} | "
+                f"time: {time_diff:.2f}s "
             )
 
             if val_loss < self.best_val_loss:

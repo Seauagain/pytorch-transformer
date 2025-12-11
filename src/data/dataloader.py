@@ -107,8 +107,8 @@ def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_spli
     elif tokenizer == "Helsinki-NLP":
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained("tokenizer/Helsinki-NLP/opus-mt-zh-en")
-        vocab = tokenizer.get_vocab()
         tokenizer.add_special_tokens({'bos_token': '<bos>'})
+        vocab = tokenizer.get_vocab()
 
         tokenizer_en = tokenizer_zh = tokenizer
         en_vocab = zh_vocab = vocab
@@ -135,7 +135,8 @@ def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_spli
         'src_pad_idx': en_vocab['<pad>'],
         'trg_pad_idx': zh_vocab['<pad>'],
         'trg_bos_idx': zh_vocab['<bos>'],
-        'trg_eos_idx': zh_vocab['<eos>']
+        # 'trg_eos_idx': zh_vocab['<eos>']
+        'trg_eos_idx': zh_vocab['</s>']
     } 
 
     if ddp:

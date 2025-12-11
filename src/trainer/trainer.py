@@ -242,6 +242,7 @@ class Trainer:
                 val_steps = [x[0] for x in val_losses]
                 val_vals = [x[1] for x in val_losses]
                 plt.plot(val_steps, val_vals, label='Validation Loss', linewidth=2)
+                
             plt.xlabel('Epoch')
             plt.ylabel('Loss')
             plt.title('Training Progress')

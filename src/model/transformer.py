@@ -244,7 +244,7 @@ class Transformer(nn.Module):
     def make_trg_mask(self, trg, trg_pad_idx):
         """padding + autoregressive mask for target."""
         # padding mask: (batch, 1, trg_len, 1)
-        trg_pad_mask = (trg != trg_pad_idx).unsqueeze(1).unsqueeze(3)  #(batch_size, 1, trg_len, 1)
+        trg_pad_mask = (trg != trg_pad_idx).unsqueeze(1).unsqueeze(2)  #(batch_size, 1, 1, trg_len)
         trg_len = trg.shape[1]
         # causal mask: (1, 1, trg_len, trg_len)
         trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=trg.device)).to(torch.bool) # 下三角

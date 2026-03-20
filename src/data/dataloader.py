@@ -17,7 +17,14 @@ from torch.nn.utils.rnn import pad_sequence
 # ============== Dataset ==============
  
 class TranslationDataset(Dataset):
+    """PyTorch Dataset wrapping pre-tokenized source/target index sequences."""
+
     def __init__(self, src_sequences, trg_sequences):
+        """
+        Args:
+            src_sequences: list of lists of int (source token ids).
+            trg_sequences: list of lists of int (target token ids).
+        """
         self.src_sequences = src_sequences
         self.trg_sequences = trg_sequences
 
@@ -25,13 +32,20 @@ class TranslationDataset(Dataset):
         return len(self.src_sequences)
 
     def __getitem__(self, idx):
-        # single pair of data
+        """Return a single (src, trg) pair as LongTensors."""
         return torch.tensor(self.src_sequences[idx]), torch.tensor(self.trg_sequences[idx])
 
 
 def collate_fn(batch, src_pad_idx, trg_pad_idx):
-    """
-    padding the sequences in the batch.
+    """Pad a batch of variable-length sequences to the same length.
+
+    Args:
+        batch: list of (src_tensor, trg_tensor) pairs.
+        src_pad_idx: padding token id for source sequences.
+        trg_pad_idx: padding token id for target sequences.
+    Returns:
+        src_batch: (batch_size, max_src_len) padded source tensor.
+        trg_batch: (batch_size, max_trg_len) padded target tensor.
     """
     src_batch, trg_batch = [], []
     for src_sample, trg_sample in batch:
@@ -43,7 +57,15 @@ def collate_fn(batch, src_pad_idx, trg_pad_idx):
 
 
 def load_sentences_from_json(json_file):
-    """load English and Chinese sentence pairs from a json file."""
+    """Load English and Chinese sentence pairs from a JSONL file.
+
+    Each line must be a JSON object with "english" and "chinese" keys.
+
+    Args:
+        json_file: path to the .json file.
+    Returns:
+        (english_sentences, chinese_sentences): two lists of stripped strings.
+    """
     english_sentences = []
     chinese_sentences = []
     with open(json_file, 'r', encoding='utf-8') as f:
@@ -55,7 +77,17 @@ def load_sentences_from_json(json_file):
 
 
 def build_vocab(sentences, tokenizer):
-    """build vocabulary according to the sentences"""
+    """Build a torchtext Vocabulary from a list of sentences.
+
+    Adds special tokens: <unk>, <pad>, <bos>, <eos>.
+    Unknown tokens default to <unk>.
+
+    Args:
+        sentences: list of raw strings.
+        tokenizer: callable that splits a string into a list of tokens.
+    Returns:
+        torchtext Vocab object.
+    """
     def yield_tokens(sentences):
         for sentence in sentences:
             yield tokenizer(sentence)
@@ -64,8 +96,18 @@ def build_vocab(sentences, tokenizer):
     return vocab
 
 def process_sentence(sentence, tokenizer, vocab, bos_token="<bos>", eos_token="<eos>"):
-    """
-    convert sentences (string/token) to indices (number/id). Add <bos> and <eos>
+    """Tokenize a sentence and convert tokens to vocabulary indices.
+
+    Prepends bos_token and appends eos_token before index lookup.
+
+    Args:
+        sentence: raw input string.
+        tokenizer: callable that splits string into tokens.
+        vocab: vocabulary mapping token -> index.
+        bos_token: beginning-of-sequence token string.
+        eos_token: end-of-sequence token string.
+    Returns:
+        list of int token indices including BOS and EOS.
     """
     tokens = tokenizer(sentence)
     tokens = [bos_token] + tokens + [eos_token]
@@ -75,7 +117,13 @@ def process_sentence(sentence, tokenizer, vocab, bos_token="<bos>", eos_token="<
 
 # ============== Dataloader ==============
 def get_vocab_tokenizer(train_data_path):
-    # 加载原始的数据
+    """Build tokenizers and vocabularies from the training data (basic tokenizer mode).
+
+    Args:
+        train_data_path: path to the JSONL training file.
+    Returns:
+        (tokenizer_en, tokenizer_zh, en_vocab, zh_vocab)
+    """
     english_sentences, chinese_sentences = load_sentences_from_json(train_data_path)
     # 定义英文和中文的分词器
     tokenizer_en = get_tokenizer("basic_english")
@@ -160,6 +208,20 @@ def get_train_val_loader(train_data_path, batch_size=32, num_workers=4, val_spli
 
 
 def get_test_loader(test_data_path, en_vocab, zh_vocab, batch_size=32):
+    """Build a DataLoader for the test set using the basic tokenizer.
+
+    Uses the same <bos>/<eos> special tokens as the basic-tokenizer training path,
+    so en_vocab and zh_vocab must have been built with build_vocab() (which adds
+    '<eos>' as a special token).
+
+    Args:
+        test_data_path: path to the JSONL test file.
+        en_vocab: source vocabulary (torchtext Vocab).
+        zh_vocab: target vocabulary (torchtext Vocab).
+        batch_size: number of samples per batch.
+    Returns:
+        (test_loader, special_tokens dict)
+    """
     en_sentences, zh_sentences = load_sentences_from_json(test_data_path)
 
     tokenizer_en = get_tokenizer('basic_english')
@@ -174,6 +236,8 @@ def get_test_loader(test_data_path, en_vocab, zh_vocab, batch_size=32):
         'src_pad_idx': en_vocab['<pad>'],
         'trg_pad_idx': zh_vocab['<pad>'],
         'trg_bos_idx': zh_vocab['<bos>'],
+        # Use '<eos>' — consistent with build_vocab() which adds it as a special token.
+        # (Only applies to the basic tokenizer path; Helsinki-NLP uses '</s>' instead.)
         'trg_eos_idx': zh_vocab['<eos>']
     }
 

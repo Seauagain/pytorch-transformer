@@ -4,76 +4,97 @@
 """
 
 
-import os 
-import sys 
-import time 
+import os
+import sys
+import time
+import math
+import json
 import logging
-from typing import Optional, Dict 
-import numpy as np 
-import matplotlib.pyplot as plt 
-import torch 
+from typing import Optional, Dict
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
 from torch import nn
 from torch import optim
-import torch.distributed as dist 
-from torch.nn.parallel import DistributedDataParallel as DDP 
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import LambdaLR
 
 from src.data.dataloader import get_train_val_loader
 
 class Trainer:
+    """Manages the full training lifecycle: initialization, DDP setup, training loop,
+    validation, checkpointing, and loss logging."""
+
     def __init__(self, config, logger=None) -> None:
-        self.config = config 
+        """
+        Args:
+            config: configuration object with all hyperparameters and paths.
+            logger: optional distributed-aware logger instance.
+        """
+        self.config = config
         self.device = config.device
         self.rank = 0
-        self.world_size = 1 
-        self.use_ddp = False 
-        self.network = None  # -> self.build_network()
+        self.world_size = 1
+        self.use_ddp = False
+        self.network = None
         self.was_initialized = False
         self.model_root = config.model_root
         self.model_name = config.model_name
-
         self.logger = logger
 
     def initialize(self, config):
-        """
-        Initialize the network architechture, DDP configuration, 
+        """Build the network and apply weight initialization (idempotent).
+
+        Args:
+            config: configuration object passed to build_network.
         """
         def init_weights(module):
-                """
-                set the initialization for netowrks parameters.
-                """
-                gamma = 1
-                if isinstance(module , (nn.Conv2d, nn.Conv3d, nn.ConvTranspose2d, nn.ConvTranspose3d, nn.Linear)):
-                    nn.init.normal_(module.weight, mean=0, std=module.weight.size(1)**(-gamma) )
-                    if module.bias is not None:
-                        nn.init.zeros_(module.bias)
-        
+            """Initialize Linear layer weights with scaled normal distribution."""
+            gamma = 1
+            if isinstance(module, (nn.Conv2d, nn.Conv3d, nn.ConvTranspose2d, nn.ConvTranspose3d, nn.Linear)):
+                nn.init.normal_(module.weight, mean=0, std=module.weight.size(1)**(-gamma))
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
         if not self.was_initialized:
-            self.network = self.build_network(config) # build network
-            self.network.apply(init_weights)    # weights init
+            self.network = self.build_network(config)
+            self.network.apply(init_weights)
             self.was_initialized = True
-    
+
     def build_network(self, config):
-        """create networks"""
+        """Instantiate the Transformer model from config hyperparameters.
+
+        Args:
+            config: must have en_vocab_size, zh_vocab_size, d_model, nums_heads,
+                    num_layers, d_ff, max_seq_length, dropout.
+        Returns:
+            Transformer model (on CPU; moved to device later).
+        """
         from src.model import Transformer
-        network = Transformer(
-                            en_vocab_size=config.en_vocab_size,
-                            de_vocab_size=config.zh_vocab_size,
-                            d_model=config.d_model,
-                            num_heads=config.nums_heads,
-                            num_layers=config.num_layers,
-                            d_ff=config.d_ff,
-                            max_seq_length=config.max_seq_length,
-                            dropout=config.dropout
-                            )
-        return network 
+        return Transformer(
+            en_vocab_size=config.en_vocab_size,
+            de_vocab_size=config.zh_vocab_size,
+            d_model=config.d_model,
+            num_heads=config.nums_heads,
+            num_layers=config.num_layers,
+            d_ff=config.d_ff,
+            max_seq_length=config.max_seq_length,
+            dropout=config.dropout
+        )
 
     def _count_parameters(self):
-        """"""
+        """Return total number of trainable parameters in the network."""
         return sum(p.numel() for p in self.network.parameters())
 
     def setup_ddp(self, rank, world_size, backend="nccl"):
-        """initialize the environment for DDP"""
+        """Initialize DistributedDataParallel for multi-GPU training.
+
+        Args:
+            rank: this process's rank (0-indexed).
+            world_size: total number of processes.
+            backend: communication backend (default: "nccl" for GPU).
+        """
         self.rank = rank 
         self.world_size = world_size
         self.use_ddp = True
@@ -86,32 +107,63 @@ class Trainer:
         self.logger.info(f"Process {rank}: Model initialized with DDP", process="all")
     
     def cleanup_ddp(self):
-        """clean up the settings for DDP"""
+        """Destroy the DDP process group after training completes."""
         if self.use_ddp:
             dist.destroy_process_group()
 
     def build_loss(self, config):
-        """loss function"""    
+        """Instantiate the loss function.
+
+        Uses CrossEntropyLoss with padding index ignored so pad tokens
+        don't contribute to the loss.
+
+        Args:
+            config: must have trg_pad_idx.
+        """
         self.criterion = nn.CrossEntropyLoss(ignore_index=config.trg_pad_idx)
     
     def build_optimizer(self, config):
-        """the optimizer and lr scheduler"""
+        """Instantiate Adam optimizer and warmup+cosine lr scheduler.
+
+        Args:
+            config: must have init_lr, warmup_epochs, max_epochs.
+        """
         self.optimizer = optim.Adam(self.network.parameters(), lr=config.init_lr) 
         self.lr_scheduler = self.warmup_scheduler(self.optimizer, config.warmup_epochs, config.max_epochs)
 
     def warmup_scheduler(self, optimizer, warmup_epochs, max_epoch):
-        """创建带warmup的学习率调度器"""
+        """Create a learning rate scheduler with linear warmup and cosine decay.
+
+        During warmup (epoch < warmup_epochs): lr scales linearly from 0 to init_lr.
+        After warmup: lr follows a cosine annealing curve down to 0.
+
+        Args:
+            optimizer: the optimizer whose lr will be scheduled.
+            warmup_epochs: number of epochs for linear warmup.
+            max_epoch: total number of training epochs.
+        Returns:
+            LambdaLR scheduler (epoch-level, call .step() once per epoch).
+        """
         def lr_lambda(epoch):
             if epoch < warmup_epochs:
                 return epoch / warmup_epochs
             else:
                 progress = (epoch - warmup_epochs) / (max_epoch - warmup_epochs)
-                return 0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159)))
-        
+                # Use math.cos (returns a Python float) instead of torch.cos
+                # to avoid LambdaLR receiving a 0-dim tensor multiplier.
+                return 0.5 * (1 + math.cos(math.pi * progress))
+
         return LambdaLR(optimizer, lr_lambda)
 
     def training_entrance(self, config):
-        if int(os.environ.get("WORLD_SIZE", "1")) > 1: 
+        """Entry point that auto-detects DDP vs single-GPU and dispatches accordingly.
+
+        Reads WORLD_SIZE from environment (set by torchrun) to decide whether to
+        initialize DDP. Cleans up DDP after training completes.
+
+        Args:
+            config: training configuration object.
+        """
             # to avoid the case: torchrun --nproc-per-node=1
             world_size = int(os.environ['WORLD_SIZE'])
             rank = int(os.environ['RANK'])
@@ -154,7 +206,10 @@ class Trainer:
             train_loss = self.train_epoch(train_loader, config)
 
             train_losses.append( [epoch, train_loss] )
-            
+
+            # Step lr scheduler once per epoch (warmup_scheduler uses epoch-level semantics)
+            if self.lr_scheduler:
+                self.lr_scheduler.step()
 
             # validation
             if epoch % config.validloss_interval == 0 or epoch == config.max_epochs:
@@ -185,15 +240,26 @@ class Trainer:
             self.logger.info(f"Training completed successfully, total time cost: {timecost/3600:.2f} h")
 
     def train_epoch(self, dataloader, config):
-        """train for one epoch"""
+        """Train for one epoch.
+
+        Performs forward pass, loss computation, and backprop for every batch.
+        Note: lr_scheduler.step() is intentionally NOT called here — it is called
+        once per epoch in run_training() because warmup_scheduler uses epoch-level
+        semantics (stepping per batch would exhaust all epochs in the first epoch).
+
+        Args:
+            dataloader: training DataLoader yielding (src, trg) batches.
+            config: training configuration with src_pad_idx, trg_pad_idx.
+        Returns:
+            Average training loss over all batches.
+        """
         self.network.train()
         total_loss = 0
         num_batches = 0
         for _, (src, trg) in enumerate(dataloader):
             src, trg = src.to(self.device), trg.to(self.device)
-            # trg_input: 去除句子末尾
+            # Teacher forcing: feed trg[:-1] as input, predict trg[1:] as output
             trg_input = trg[:, :-1]
-            # trg_output: 去除句子开头
             trg_output = trg[:, 1:].contiguous().view(-1)
             self.optimizer.zero_grad()
             output = self.network(src, trg_input, config.src_pad_idx, config.trg_pad_idx)
@@ -201,14 +267,19 @@ class Trainer:
             loss = self.criterion(output, trg_output)
             loss.backward()
             self.optimizer.step()
-            if self.lr_scheduler:
-                self.lr_scheduler.step()
             total_loss += loss.item()
             num_batches += 1
         return total_loss / num_batches
     
     def validate_epoch(self, dataloader, config):
-        """valiadation for one epoch"""
+        """Run validation for one epoch (no gradient updates).
+
+        Args:
+            dataloader: validation DataLoader yielding (src, trg) batches.
+            config: must have src_pad_idx, trg_pad_idx.
+        Returns:
+            Average validation loss over all batches.
+        """
         self.network.eval()
         total_loss = 0
         num_batches = 0
@@ -228,9 +299,24 @@ class Trainer:
         return total_loss / num_batches
     
     def save_loss(self, train_losses, val_losses):
-        pass
+        """Save train and validation losses to a JSON file.
+
+        Args:
+            train_losses: list of [epoch, loss] pairs from training.
+            val_losses: list of [epoch, loss] pairs from validation.
+        """
+        loss_path = os.path.join(self.model_root, self.model_name, "losses.json")
+        with open(loss_path, 'w') as f:
+            json.dump({'train': train_losses, 'val': val_losses}, f)
 
     def plot_loss(self, train_losses, val_losses, save_path='loss_plot.png'):
+        """Plot and save training/validation loss curves.
+
+        Args:
+            train_losses: list of [epoch, loss] pairs.
+            val_losses: list of [epoch, loss] pairs.
+            save_path: file path for the saved PNG figure.
+        """
         if not self.use_ddp or self.rank == 0:
             plt.figure(figsize=(10, 6))
 
@@ -252,6 +338,15 @@ class Trainer:
             plt.close()
     
     def save_checkpoint(self, epoch, train_losses, val_losses):
+        """Save model weights, optimizer state, scheduler state, and losses to disk.
+
+        Only rank 0 writes the checkpoint in DDP mode.
+
+        Args:
+            epoch: current epoch number (used in the filename).
+            train_losses: list of [epoch, loss] pairs accumulated so far.
+            val_losses: list of [epoch, loss] pairs accumulated so far.
+        """
         ckpt_path = os.path.join(self.model_root, self.model_name, f"ckpt{epoch}.pth")
         if not self.use_ddp or self.rank == 0:
             checkpoint = {
